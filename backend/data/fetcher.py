@@ -57,51 +57,56 @@ def _is_krx(ticker: str) -> bool:
     return ticker.isdigit() and len(ticker) == 6
 
 
-def _fetch_stooq(ticker: str, start: str, end: str) -> pd.DataFrame:
-    """stooq.com fallback — Yahoo Finance 차단 시 사용"""
-    s = start.replace("-", "")
-    e = end.replace("-", "")
-    stooq_ticker = ticker.replace("-", ".").upper()
-    # 암호화폐는 stooq 미지원
-    if "." in ticker and ticker.endswith("USD"):
-        return pd.DataFrame()
-    url = f"https://stooq.com/q/d/l/?s={stooq_ticker}&d1={s}&d2={e}&i=d"
+def _fetch_yahoo_direct(ticker: str, start: str, end: str) -> pd.DataFrame:
+    """Yahoo Finance v8 chart API 직접 호출 (yfinance 라이브러리 우회)"""
+    from datetime import timezone
+    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    p1 = int(start_dt.timestamp())
+    p2 = int(end_dt.timestamp())
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+           f"?interval=1d&period1={p1}&period2={p2}&includePrePost=false")
     try:
         session = _make_session()
-        resp = session.get(url, timeout=10)
-        from io import StringIO
-        df = pd.read_csv(StringIO(resp.text), index_col=0, parse_dates=True)
-        if df.empty or "No data" in resp.text:
+        session.headers.update({"Accept": "application/json"})
+        resp = session.get(url, timeout=15)
+        data = resp.json()
+        result = data.get("chart", {}).get("result", [])
+        if not result:
             return pd.DataFrame()
-        df.index = pd.to_datetime(df.index)
-        return df.sort_index()
+        r = result[0]
+        timestamps = r.get("timestamp", [])
+        q = r.get("indicators", {}).get("quote", [{}])[0]
+        adjclose = r.get("indicators", {}).get("adjclose", [{}])[0].get("adjclose", q.get("close"))
+        df = pd.DataFrame({
+            "Open":   q.get("open"),
+            "High":   q.get("high"),
+            "Low":    q.get("low"),
+            "Close":  adjclose,
+            "Volume": q.get("volume"),
+        }, index=pd.to_datetime(timestamps, unit="s", utc=True).tz_localize(None))
+        return df.dropna()
     except Exception:
         return pd.DataFrame()
 
 
 def _fetch_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
-    delays = [0, 3, 8]
-    raw = None
-    last_exc = None
-    for delay in delays:
-        if delay:
-            time.sleep(delay)
-        try:
-            session = _make_session()
-            t = yf.Ticker(ticker, session=session)
-            raw = t.history(start=start, end=end, auto_adjust=True)
-            if not raw.empty:
-                break
-        except Exception as e:
-            last_exc = e
-            raw = None
+    # 1차: Yahoo Finance v8 API 직접 호출
+    raw = _fetch_yahoo_direct(ticker, start, end)
 
-    # yfinance 실패 시 stooq fallback
+    # 2차: yfinance 라이브러리 fallback
     if raw is None or raw.empty:
-        raw = _fetch_stooq(ticker, start, end)
-        if raw is not None and not raw.empty:
-            raw = raw.rename(columns={"Open": "Open", "High": "High", "Low": "Low",
-                                       "Close": "Close", "Volume": "Volume"})
+        for delay in [0, 5]:
+            if delay:
+                time.sleep(delay)
+            try:
+                session = _make_session()
+                t = yf.Ticker(ticker, session=session)
+                raw = t.history(start=start, end=end, auto_adjust=True)
+                if raw is not None and not raw.empty:
+                    break
+            except Exception:
+                raw = None
 
     if raw is None or raw.empty:
         raise ValueError(f"데이터를 가져올 수 없습니다: {ticker} — 잘못된 티커이거나 데이터 소스 오류입니다.")
