@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+@layer base {
+  body { @apply bg-surface text-white; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-surface-card; }
+  ::-webkit-scrollbar-thumb { @apply bg-surface-border rounded-full; }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-card border border-surface-border rounded-2xl p-6;
+  }
+  .badge-profit { @apply text-profit bg-profit/10 px-2 py-0.5 rounded text-xs font-semibold; }
+  .badge-loss   { @apply text-loss   bg-loss/10   px-2 py-0.5 rounded text-xs font-semibold; }
+  .btn-primary {
+    @apply bg-brand text-black font-semibold px-5 py-2.5 rounded-xl
+           hover:bg-brand-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply border border-surface-border text-gray-300 font-medium px-4 py-2 rounded-xl
+           hover:border-brand hover:text-brand transition-colors;
+  }
+}
