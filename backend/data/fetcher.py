@@ -1,8 +1,18 @@
 import time
+import requests
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 from data.cache import get_cached, set_cached
+
+def _make_session():
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    })
+    return s
 
 POPULAR_NAMES = {
     "AAPL": "Apple Inc.", "MSFT": "Microsoft Corp.", "GOOGL": "Alphabet Inc.",
@@ -48,17 +58,21 @@ def _is_krx(ticker: str) -> bool:
 
 
 def _fetch_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
-    for attempt in range(3):
+    delays = [0, 3, 8]
+    raw = None
+    for attempt, delay in enumerate(delays):
+        if delay:
+            time.sleep(delay)
         try:
-            raw = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+            session = _make_session()
+            raw = yf.download(ticker, start=start, end=end, progress=False,
+                              auto_adjust=True, session=session)
             if not raw.empty:
                 break
         except Exception:
-            pass
-        if attempt < 2:
-            time.sleep(2 ** attempt)
-    else:
-        raise ValueError(f"데이터를 가져올 수 없습니다: {ticker} — Yahoo Finance 일시적 오류이거나 잘못된 티커입니다.")
+            raw = None
+    if raw is None or raw.empty:
+        raise ValueError(f"데이터를 가져올 수 없습니다: {ticker} — 잘못된 티커이거나 Yahoo Finance 일시적 오류입니다.")
 
     if raw.empty:
         raise ValueError(f"데이터 없음: {ticker}")
