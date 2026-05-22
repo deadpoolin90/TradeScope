@@ -60,13 +60,13 @@ def _is_krx(ticker: str) -> bool:
 def _fetch_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
     delays = [0, 3, 8]
     raw = None
-    for attempt, delay in enumerate(delays):
+    for delay in delays:
         if delay:
             time.sleep(delay)
         try:
             session = _make_session()
-            raw = yf.download(ticker, start=start, end=end, progress=False,
-                              auto_adjust=True, session=session)
+            t = yf.Ticker(ticker, session=session)
+            raw = t.history(start=start, end=end, auto_adjust=True)
             if not raw.empty:
                 break
         except Exception:
