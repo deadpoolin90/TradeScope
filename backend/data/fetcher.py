@@ -57,9 +57,32 @@ def _is_krx(ticker: str) -> bool:
     return ticker.isdigit() and len(ticker) == 6
 
 
+def _fetch_stooq(ticker: str, start: str, end: str) -> pd.DataFrame:
+    """stooq.com fallback — Yahoo Finance 차단 시 사용"""
+    s = start.replace("-", "")
+    e = end.replace("-", "")
+    stooq_ticker = ticker.replace("-", ".").upper()
+    # 암호화폐는 stooq 미지원
+    if "." in ticker and ticker.endswith("USD"):
+        return pd.DataFrame()
+    url = f"https://stooq.com/q/d/l/?s={stooq_ticker}&d1={s}&d2={e}&i=d"
+    try:
+        session = _make_session()
+        resp = session.get(url, timeout=10)
+        from io import StringIO
+        df = pd.read_csv(StringIO(resp.text), index_col=0, parse_dates=True)
+        if df.empty or "No data" in resp.text:
+            return pd.DataFrame()
+        df.index = pd.to_datetime(df.index)
+        return df.sort_index()
+    except Exception:
+        return pd.DataFrame()
+
+
 def _fetch_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
     delays = [0, 3, 8]
     raw = None
+    last_exc = None
     for delay in delays:
         if delay:
             time.sleep(delay)
@@ -69,16 +92,25 @@ def _fetch_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
             raw = t.history(start=start, end=end, auto_adjust=True)
             if not raw.empty:
                 break
-        except Exception:
+        except Exception as e:
+            last_exc = e
             raw = None
-    if raw is None or raw.empty:
-        raise ValueError(f"데이터를 가져올 수 없습니다: {ticker} — 잘못된 티커이거나 Yahoo Finance 일시적 오류입니다.")
 
-    if raw.empty:
-        raise ValueError(f"데이터 없음: {ticker}")
+    # yfinance 실패 시 stooq fallback
+    if raw is None or raw.empty:
+        raw = _fetch_stooq(ticker, start, end)
+        if raw is not None and not raw.empty:
+            raw = raw.rename(columns={"Open": "Open", "High": "High", "Low": "Low",
+                                       "Close": "Close", "Volume": "Volume"})
+
+    if raw is None or raw.empty:
+        raise ValueError(f"데이터를 가져올 수 없습니다: {ticker} — 잘못된 티커이거나 데이터 소스 오류입니다.")
 
     if isinstance(raw.columns, pd.MultiIndex):
         raw = raw.droplevel(1, axis=1)
+
+    col_map = {c: c.capitalize() for c in raw.columns}
+    raw = raw.rename(columns=col_map)
 
     df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
     df.columns = ["open", "high", "low", "close", "volume"]
